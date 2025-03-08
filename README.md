@@ -1,17 +1,17 @@
-##Requisitos previos:
+### Requisitos previos:
 
 - Node.js instalado en tu servidor
 - Una cuenta de WhatsApp para el negocio
 - Una cuenta de Google con acceso a Google Calendar
 
 
-##configurar el proyecto:
+### configurar el proyecto:
 
 - npm init -y
 - npm install whatsapp-web.js qrcode-terminal googleapis fs readline
 
 
-##Configura la API de Google Calendar:
+### Configura la API de Google Calendar:
 
 - Ve a la Google Cloud Console
 - Crea un nuevo proyecto
