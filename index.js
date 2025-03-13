@@ -1,14 +1,12 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const { google } = require('googleapis');
+const axios = require('axios'); // Para hacer llamadas HTTP a los webhooks
 const fs = require('fs');
-const readline = require('readline');
 const path = require('path');
 
-// Configuración para la autenticación con Google Calendar
-const SCOPES = ['https://www.googleapis.com/auth/calendar'];
-
-const CREDENTIALS_PATH = 'credentials.json';
+// URLs de webhooks de MAKE (reemplazar con tus URLs reales)
+const WEBHOOK_CONSULTA = 'https://hook.us2.make.com/ka77ngdhtnzo3m3drpt1g63m31j89u7c';
+const WEBHOOK_AGENDA = 'https://hook.us2.make.com/ucxoghvjkuqb71xdliml3ipcnodi5fi9';
 
 // Inicializar cliente de WhatsApp con opciones adicionales
 const client = new Client({
@@ -55,135 +53,59 @@ client.on('ready', () => {
     console.log('Bot de WhatsApp listo y conectado');
 });
 
-// Autenticación con Google Calendar
-function getAccessToken() {
-    // Ruta donde guardaremos el token
-    const TOKEN_PATH = path.join(__dirname, 'token.json');
-    
+// Función para consultar disponibilidad mediante webhook de MAKE
+async function verificarDisponibilidad(fecha, hora) {
     try {
-        // Leer las credenciales del archivo
-        const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH));
+        console.log(`Consultando disponibilidad para fecha: ${fecha}, hora: ${hora}`);
         
-        // Extraer las credenciales, adaptándose a diferentes formatos
-        let client_id, client_secret;
+        const response = await axios.post(WEBHOOK_CONSULTA, {
+            fecha: fecha,
+            hora: hora
+        });
         
-        if (credentials.installed) {
-            client_id = credentials.installed.client_id;
-            client_secret = credentials.installed.client_secret;
-        } else if (credentials.web) {
-            client_id = credentials.web.client_id;
-            client_secret = credentials.web.client_secret;
-        } else {
-            throw new Error("Formato de credenciales incorrecto");
+        console.log("Respuesta recibida del webhook:", JSON.stringify(response.data));
+        
+        // Manejar el formato [ { disponible: 'true' } ]
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+            const disponibleValue = response.data[0].disponible;
+            return disponibleValue === true || disponibleValue === "true";
         }
         
-        // Crear cliente OAuth2 con modo OOB (fuera de banda)
-        const oAuth2Client = new google.auth.OAuth2(
-            client_id,
-            client_secret,
-            'urn:ietf:wg:oauth:2.0:oob'  // URL de redirección para modo OOB
-        );
-        
-        // Si ya tenemos un token guardado, lo usamos
-        if (fs.existsSync(TOKEN_PATH)) {
-            const token = JSON.parse(fs.readFileSync(TOKEN_PATH));
-            oAuth2Client.setCredentials(token);
-            return oAuth2Client;
-        }
-        
-        // Si no hay token, generamos un nuevo url de autorización
-        const authUrl = oAuth2Client.generateAuthUrl({
-            access_type: 'offline',
-            scope: SCOPES
-        });
-        console.log('Autoriza esta app visitando esta url:', authUrl);
-        console.log('Después de autorizar, verás un código en la página que debes copiar aquí:');
-        
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-        });
-        
-        // Solicitar el código de autorización al usuario
-        return new Promise((resolve, reject) => {
-            rl.question('Ingresa el código de la página de autorización: ', (code) => {
-                rl.close();
-                
-                // Intercambiar el código por un token
-                oAuth2Client.getToken(code, (err, token) => {
-                    if (err) {
-                        console.error('Error al obtener token de acceso:', err);
-                        return reject(err);
-                    }
-                    
-                    oAuth2Client.setCredentials(token);
-                    
-                    // Guardar el token para usos futuros
-                    fs.writeFileSync(TOKEN_PATH, JSON.stringify(token));
-                    console.log('Token guardado en:', TOKEN_PATH);
-                    
-                    // Devolver el cliente autorizado
-                    resolve(oAuth2Client);
-                });
-            });
-        });
-    } catch (err) {
-        console.error('Error al procesar credenciales:', err);
-        throw err;
+        console.error('Formato de respuesta no reconocido:', response.data);
+        return false;
+    } catch (error) {
+        console.error('Error al verificar disponibilidad:', error.message);
+        return false;
     }
 }
 
-// Verificar disponibilidad en Google Calendar
-async function verificarDisponibilidad(fecha, hora) {
-    const auth = await getAccessToken(); 
-    const calendar = google.calendar({ version: 'v3', auth });
-    
-    // Calcular fecha y hora en formato ISO
-    const fechaHoraInicio = new Date(`${fecha}T${hora}:00`);
-    const fechaHoraFin = new Date(fechaHoraInicio.getTime() + 60 * 60 * 1000); // Añadir 1 hora
-    
-    const response = await calendar.events.list({
-        calendarId: 'primary',
-        timeMin: fechaHoraInicio.toISOString(),
-        timeMax: fechaHoraFin.toISOString(),
-        singleEvents: true,
-        orderBy: 'startTime',
-    });
-    
-    const eventos = response.data.items;
-    return eventos.length === 0; // True si no hay eventos en ese horario
-}
-
-// Crear cita en Google Calendar
+// Función para crear cita mediante webhook de MAKE
 async function crearCita(nombre, telefono, servicio, fecha, hora) {
-    const auth = await getAccessToken();
-    const calendar = google.calendar({ version: 'v3', auth });
-    
-    const fechaHoraInicio = new Date(`${fecha}T${hora}:00`);
-    const fechaHoraFin = new Date(fechaHoraInicio.getTime() + servicios[servicio].duracion * 60 * 1000);
-    
-    const event = {
-        summary: `Cita: ${servicios[servicio].nombre} - ${nombre}`,
-        description: `Cliente: ${nombre}\nTeléfono: ${telefono}\nServicio: ${servicios[servicio].nombre}`,
-        start: {
-            dateTime: fechaHoraInicio.toISOString(),
-            timeZone: 'Colombia/Bogota', // Cambiar según la zona horaria
-        },
-        end: {
-            dateTime: fechaHoraFin.toISOString(),
-            timeZone: 'Colombia/Bogota', // Cambiar según la zona horaria
-        },
-    };
-    
     try {
-        const response = await calendar.events.insert({
-            calendarId: 'primary',
-            resource: event,
+        console.log(`Creando cita para: ${nombre}, servicio: ${servicios[servicio].nombre}, fecha: ${fecha}, hora: ${hora}`);
+        
+        const response = await axios.post(WEBHOOK_AGENDA, {
+            nombre: nombre,
+            telefono: telefono,
+            servicio: servicios[servicio].nombre,
+            duracion: servicios[servicio].duracion,
+            fecha: fecha,
+            hora: hora
         });
-        return response.data;
+        
+        console.log("Respuesta recibida del webhook de creación:", JSON.stringify(response.data));
+        
+        // Asumimos un formato similar para la respuesta de creación
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+            const exitoValue = response.data[0].exito || response.data[0].success;
+            return exitoValue === true || exitoValue === "true";
+        }
+        
+        // Si el formato es diferente pero recibimos un estado 200, asumimos éxito
+        return response.status === 200;
     } catch (error) {
-        console.error('Error al crear el evento:', error);
-        return null;
+        console.error('Error al crear la cita:', error.message);
+        return false;
     }
 }
 
@@ -261,7 +183,7 @@ client.on('message', async (message) => {
                 return;
             }
             
-            // Convertir a formato YYYY-MM-DD para Google Calendar
+            // Convertir a formato YYYY-MM-DD para MAKE
             const partesFecha = messageContent.split('/');
             const fechaFormateada = `${partesFecha[2]}-${partesFecha[1].padStart(2, '0')}-${partesFecha[0].padStart(2, '0')}`;
             
@@ -288,50 +210,68 @@ client.on('message', async (message) => {
             state.hora = messageContent;
             state.step = 'confirmacion';
             
-            // Verificar disponibilidad en Calendar
-            const disponible = await verificarDisponibilidad(state.fecha, state.hora);
-            
-            if (!disponible) {
+            try {
+                // Verificar disponibilidad a través del webhook de MAKE
+                console.log(`Verificando disponibilidad para ${state.fecha} a las ${state.hora}...`);
+                const disponible = await verificarDisponibilidad(state.fecha, state.hora);
+                console.log(`Resultado de disponibilidad: ${disponible}`);
+                
+                if (!disponible) {
+                    await client.sendMessage(senderId, 
+                        'Lo sentimos, ese horario ya está ocupado. Por favor, selecciona otro horario:'
+                    );
+                    state.step = 'hora';
+                    return;
+                }
+                
+                // Mostrar resumen de la cita para confirmación
                 await client.sendMessage(senderId, 
-                    'Lo sentimos, ese horario ya está ocupado. Por favor, selecciona otro horario:'
+                    `📝 *Resumen de tu cita:*\n\n` +
+                    `Nombre: ${state.nombre}\n` +
+                    `Teléfono: ${state.telefono}\n` +
+                    `Servicio: ${servicios[state.servicio].nombre}\n` +
+                    `Fecha: ${state.fecha}\n` +
+                    `Hora: ${state.hora}\n\n` +
+                    `Para confirmar tu cita, escribe *CONFIRMAR*. Para cancelar, escribe *CANCELAR*.`
+                );
+            } catch (error) {
+                console.error("Error en proceso de verificación:", error);
+                await client.sendMessage(senderId, 
+                    'Lo sentimos, hubo un problema al verificar la disponibilidad. Por favor, intenta nuevamente.'
                 );
                 state.step = 'hora';
-                return;
             }
-            
-            // Mostrar resumen de la cita para confirmación
-            await client.sendMessage(senderId, 
-                `📝 *Resumen de tu cita:*\n\n` +
-                `Nombre: ${state.nombre}\n` +
-                `Teléfono: ${state.telefono}\n` +
-                `Servicio: ${servicios[state.servicio].nombre}\n` +
-                `Fecha: ${state.fecha}\n` +
-                `Hora: ${state.hora}\n\n` +
-                `Para confirmar tu cita, escribe *CONFIRMAR*. Para cancelar, escribe *CANCELAR*.`
-            );
             break;
             
         case 'confirmacion':
             if (messageContent === 'confirmar') {
-                // Crear la cita en Google Calendar
-                const resultado = await crearCita(
-                    state.nombre,
-                    state.telefono,
-                    state.servicio,
-                    state.fecha,
-                    state.hora
-                );
-                
-                if (resultado) {
-                    await client.sendMessage(senderId, 
-                        `✅ *¡Cita confirmada!*\n\n` +
-                        `Tu cita para ${servicios[state.servicio].nombre} ha sido agendada para el ${state.fecha} a las ${state.hora}.\n\n` +
-                        `Te recordaremos un día antes por este medio. Si necesitas cambiar o cancelar tu cita, por favor contáctanos con al menos 24 horas de anticipación.\n\n` +
-                        `¡Gracias por elegir Peluquería Estilo!`
+                try {
+                    // Crear la cita a través del webhook de MAKE
+                    console.log("Procesando confirmación de cita...");
+                    const resultado = await crearCita(
+                        state.nombre,
+                        state.telefono,
+                        state.servicio,
+                        state.fecha,
+                        state.hora
                     );
-                } else {
+                    
+                    if (resultado) {
+                        await client.sendMessage(senderId, 
+                            `✅ *¡Cita confirmada!*\n\n` +
+                            `Tu cita para ${servicios[state.servicio].nombre} ha sido agendada para el ${state.fecha} a las ${state.hora}.\n\n` +
+                            `Te recordaremos un día antes por este medio. Si necesitas cambiar o cancelar tu cita, por favor contáctanos con al menos 24 horas de anticipación.\n\n` +
+                            `¡Gracias por elegir Peluquería Estilo!`
+                        );
+                    } else {
+                        await client.sendMessage(senderId, 
+                            `❌ Lo sentimos, hubo un problema al agendar tu cita. Por favor, intenta nuevamente o contáctanos directamente al teléfono de la peluquería.`
+                        );
+                    }
+                } catch (error) {
+                    console.error("Error en proceso de confirmación:", error);
                     await client.sendMessage(senderId, 
-                        `❌ Lo sentimos, hubo un problema al agendar tu cita. Por favor, intenta nuevamente o contáctanos directamente al teléfono de la peluquería.`
+                        `❌ Lo sentimos, hubo un error al procesar tu cita. Por favor, intenta nuevamente o contáctanos directamente al teléfono de la peluquería.`
                     );
                 }
             } else if (messageContent === 'cancelar') {
