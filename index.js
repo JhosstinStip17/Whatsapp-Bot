@@ -47,82 +47,8 @@ const CHATPDF_API_KEY = process.env.CHATPDF_API_KEY; // Configura esto en tu .en
 // ID del chat de ChatPDF preexistente donde ya está cargado el PDF
 const CHATPDF_EXISTING_SOURCE_ID = process.env.CHATPDF_SOURCE_ID;
 
-
-// Función para subir el PDF a ChatPDF
-// async function uploadPDFToChatPDF(pdfPath) {
-//     try {
-//         console.log('Subiendo PDF a ChatPDF:', pdfPath);
-        
-//         // Check if file exists
-//         if (!fs.existsSync(pdfPath)) {
-//             console.error('El archivo PDF no existe en la ruta especificada');
-//             return false;
-//         }
-        
-//         // Prepare form data with the file
-//         const form = new FormData();
-//         form.append('file', fs.createReadStream(pdfPath));
-        
-//         // Upload to ChatPDF API
-//         const response = await axios.post('https://api.chatpdf.com/v1/sources/add-file', form, {
-//             headers: {
-//                 ...form.getHeaders(),
-//                 'x-api-key': CHATPDF_API_KEY,
-//             }
-//         });
-        
-//         // Store the source ID for future queries
-//         chatPdfSourceId = response.data.sourceId;
-//         console.log('PDF subido exitosamente a ChatPDF, Source ID:', chatPdfSourceId);
-        
-//         // Extract basic information from the PDF
-//         const infoExtractionResult = await chatWithPDF(
-//             "Extrae la siguiente información del PDF y preséntala en formato JSON: " +
-//             "nombre de la empresa, dirección, teléfono, descripción, horarios y política de cancelación. " +
-//             "Solo devuelve el JSON sin ningún texto adicional."
-//         );
-        
-//         try {
-//             // Try to parse the JSON response
-//             const jsonStart = infoExtractionResult.indexOf('{');
-//             const jsonEnd = infoExtractionResult.lastIndexOf('}') + 1;
-//             const jsonStr = infoExtractionResult.substring(jsonStart, jsonEnd);
-//             empresaInfo = JSON.parse(jsonStr);
-            
-//             console.log('Información estructurada procesada:', empresaInfo);
-//         } catch (parseError) {
-//             console.warn('Error al parsear la respuesta JSON:', parseError);
-//             // Set default values if parsing fails
-//             empresaInfo = {
-//                 nombre: 'Peluquería Estilo',
-//                 direccion: 'Av. Principal 123',
-//                 telefono: '555-1234',
-//                 descripcion: 'Somos una peluquería comprometida con la calidad y satisfacción de nuestros clientes.',
-//                 horarios: 'Lunes a Sábado de 10:00 a 19:00 hs.',
-//                 politicaCancelacion: 'Se permite cancelar o cambiar citas con 24 horas de anticipación sin costo.'
-//             };
-//         }
-        
-//         return true;
-//     } catch (error) {
-//         console.error('Error al subir PDF a ChatPDF:', error.response?.data || error.message);
-        
-//         // Set default values if upload fails
-//         chatPdfSourceId = '';
-//         empresaInfo = {
-//             nombre: 'Peluquería Estilo',
-//             direccion: 'Av. Principal 123',
-//             telefono: '555-1234',
-//             descripcion: 'Somos una peluquería comprometida con la calidad y satisfacción de nuestros clientes.',
-//             horarios: 'Lunes a Sábado de 10:00 a 19:00 hs.',
-//             politicaCancelacion: 'Se permite cancelar o cambiar citas con 24 horas de anticipación sin costo.'
-//         };
-        
-//         return false;
-//     }
-// }
-
 // Función para chatear con el PDF usando ChatPDF
+
 async function chatWithPDF(message) {
     try {
         if (!chatPdfSourceId) {
@@ -130,7 +56,7 @@ async function chatWithPDF(message) {
             throw new Error('ChatPDF Source ID no configurado');
         }
         
-        console.log("Enviando a ChatPDF:", message); // Log del prompt enviado
+        // console.log("Enviando a ChatPDF:", message); // Log del prompt enviado
 
         const response = await axios.post('https://api.chatpdf.com/v1/chats/message', {
             sourceId: chatPdfSourceId,
@@ -273,7 +199,7 @@ client.on('ready', async () => {
                     const jsonMatch = infoExtractionResult.match(/\{[\s\S]*\}/); // Intenta encontrar un JSON en la respuesta
                     if (jsonMatch) {
                         empresaInfo = JSON.parse(jsonMatch[0]);
-                        console.log('Información estructurada de la empresa procesada:', empresaInfo);
+                        // console.log('Información estructurada de la empresa procesada:', empresaInfo);
                     } else {
                          console.warn('No se encontró un JSON válido en la respuesta para info de empresa:', infoExtractionResult);
                          empresaInfo = {}; // Dejar vacío si no se pudo parsear
@@ -297,33 +223,53 @@ client.on('ready', async () => {
 // Función para consultar disponibilidad mediante webhook de MAKE
 async function verificarDisponibilidad(fecha, hora) {
     try {
-        console.log(`Consultando disponibilidad para fecha: ${fecha}, hora: ${hora}`);
-        
+        // console.log(`Consultando disponibilidad para fecha: ${fecha}, hora: ${hora}`);
         const response = await axios.post(WEBHOOK_CONSULTA, {
-            fecha: fecha,
-            hora: hora
+            fecha: fecha, // Asegúrate que Make espere YYYY-MM-DD
+            hora: hora   // Asegúrate que Make espere HH:MM
         });
-        
-        // Adaptado para manejar la respuesta [{ "disponible": true/false }]
-        if (response.data && Array.isArray(response.data) && response.data.length > 0 && response.data[0].hasOwnProperty('disponible')) {
-            const disponibleValue = response.data[0].disponible;
-            console.log("Respuesta de disponibilidad Make:", disponibleValue);
-            // Convertir a booleano explícitamente
-            return String(disponibleValue).toLowerCase() === 'true';
-       } else {
-           console.error('Formato de respuesta de disponibilidad no reconocido o inesperado:', response.data);
-           return false; // Asumir no disponible si la respuesta no es clara
-       }
+
+        console.log("Respuesta completa de disponibilidad Make:", JSON.stringify(response.data)); // Log para ver la respuesta completa
+
+        // --- INICIO LÓGICA MODIFICADA ---
+        // Verificar si la respuesta es un array no vacío
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+
+            // Usar 'every' para chequear si TODOS los elementos indican disponibilidad
+            const todosDisponibles = response.data.every(item => {
+                // Verificar que cada item sea un objeto, tenga la propiedad 'disponible'
+                // y que su valor (convertido a string y minúsculas) sea 'true'
+                return typeof item === 'object' &&
+                       item !== null &&
+                       item.hasOwnProperty('disponible') &&
+                       String(item.disponible).toLowerCase() === 'true';
+            });
+
+            if (todosDisponibles) {
+                // console.log("Evaluación de disponibilidad: Todos los slots están disponibles.");
+                return true; // Solo retorna true si TODOS cumplen la condición
+            } else {
+                // console.log("Evaluación de disponibilidad: Al menos un slot NO está disponible.");
+                return false; // Si al menos uno no cumple, retorna false
+            }
+
+        } else {
+            // Si la respuesta no es un array, está vacía, o tiene un formato inesperado
+            console.error('Formato de respuesta de disponibilidad no reconocido o inesperado:', response.data);
+            return false; // Asumir no disponible si la respuesta no es clara o está vacía
+        }
+        // --- FIN LÓGICA MODIFICADA ---
+
     } catch (error) {
         console.error('Error al verificar disponibilidad via Make:', error.response?.data || error.message);
-        return false; // Asumir no disponible en caso de error
+        return false; // Asumir no disponible en caso de error de conexión/AXIOS
     }
 }
 
 // Función para crear cita mediante webhook de MAKE
 async function crearCita(nombre, telefono, servicioNombre,servicioDuracion, fecha, hora) {
     try {
-            console.log(`Creando cita para: ${nombre}, servicio: ${servicioNombre}, fecha: ${fecha}, hora: ${hora}`);
+            // console.log(`Creando cita para: ${nombre}, servicio: ${servicioNombre}, fecha: ${fecha}, hora: ${hora}`);
             const response = await axios.post(WEBHOOK_AGENDA, {
                 nombre: nombre,
                 telefono: telefono,
@@ -333,20 +279,35 @@ async function crearCita(nombre, telefono, servicioNombre,servicioDuracion, fech
                 hora: hora   // Asegúrate que Make espere HH:MM
             });
     
-             // Adaptado para manejar la respuesta [{ "exito": true/false }] o [{ "success": true/false }]
-             if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-                const resultado = response.data[0];
-                if (resultado.hasOwnProperty('exito') || resultado.hasOwnProperty('success')) {
-                    const exitoValue = resultado.exito ?? resultado.success;
-                    console.log("Respuesta de creación de cita Make:", exitoValue)
-                    return String(exitoValue).toLowerCase() === 'true';
+            let resultadoExitoso = false; // Variable para guardar si fue exitoso
+
+            if (response.data) {
+                let resultadoObjeto = null;
+
+                // 1. Comprobar si es un ARRAY con al menos un elemento
+                if (Array.isArray(response.data) && response.data.length > 0) {
+                    resultadoObjeto = response.data[0]; // Usar el primer elemento
+                }
+                // 2. Si no es array, comprobar si es un OBJETO directamente
+                else if (typeof response.data === 'object' && response.data !== null && !Array.isArray(response.data)) {
+                    resultadoObjeto = response.data; // Usar el objeto directamente
+                }
+
+                // 3. Si tenemos un objeto (de cualquiera de las formas anteriores), verificar la propiedad
+                if (resultadoObjeto && (resultadoObjeto.hasOwnProperty('exito') || resultadoObjeto.hasOwnProperty('success'))) {
+                    const exitoValue = resultadoObjeto.exito ?? resultadoObjeto.success;
+                    console.log("Respuesta de creación de cita Make procesada:", exitoValue);
+                    // Comprobar si el valor es true (como booleano o string)
+                    resultadoExitoso = String(exitoValue).toLowerCase() === 'true';
                 }
             }
-    
-            // Si la respuesta no tiene el formato esperado pero fue 200 OK, podríamos considerarlo éxito?
-            // Depende de cómo Make responda. Ser estricto es más seguro.
-            console.error('Formato de respuesta de creación de cita no reconocido o inesperado:', response.data);
-            return false; // Asumir fallo si la respuesta no es clara
+
+            // 4. Si no se marcó como exitoso después de las comprobaciones, mostrar error
+            if (!resultadoExitoso) {
+                 console.error('Formato de respuesta de creación de cita no reconocido o no exitoso:', response.data);
+            }
+
+            return resultadoExitoso; // Devolver true o false
     
         } catch (error) {
             console.error('Error al crear la cita via Make:', error.response?.data || error.message);
@@ -421,44 +382,55 @@ client.on('message', async (message) => {
         case 'nombre':
             // Asumimos que el messageContent es el nombre, ChatPDF ya dio una respuesta genérica
             state.nombre = messageContent;
-            state.step = 'telefono';
-            const msgTelefono = `Gracias ${state.nombre}. Ahora, por favor, comparte tu número de teléfono de contacto:`;
-            await client.sendMessage(senderId, msgTelefono);
-            state.conversationHistory.push({ role: 'assistant', content: msgTelefono });
-            break;
-
-        case 'telefono':
-            // Asumimos que el messageContent es el teléfono
-            state.telefono = messageContent; // Podríamos añadir validación básica de formato aquí
+            try {
+                // senderId ya contiene message.from (ej: "573001234567@c.us")
+                if (senderId && senderId.includes('@')) {
+                   state.telefono = senderId.split('@')[0]; // Extrae "573001234567"
+                //    console.log(`Número de teléfono capturado automáticamente para ${state.nombre}: ${state.telefono}`);
+                } else {
+                   // Si senderId no tiene el formato esperado, podríamos manejarlo
+                   console.warn(`No se pudo extraer el número del senderId: ${senderId}. Se dejará vacío.`);
+                   state.telefono = ''; // O asignar un valor por defecto o manejar el error
+                }
+           } catch(e) {
+               console.error("Error al procesar senderId para teléfono:", e);
+               state.telefono = ''; // Asegurarse de tener un valor por defecto en caso de error
+           }
             state.step = 'servicio';
 
-            // --- NUEVO: Cargar servicios desde PDF ---
+            // Cargar y mostrar servicios
             try {
                 const serviciosPrompt = `Extrae únicamente la lista de servicios ofrecidos por la empresa con sus duraciones en minutos del PDF. Devuelve el resultado estrictamente como un objeto JSON. Las claves deben ser números secuenciales como strings (empezando en "1") y los valores deben ser objetos con las claves "nombre" (string) y "duracion" (número). Ejemplo: {"1": {"nombre": "Corte de Cabello", "duracion": 30}, "2": {"nombre": "Tinte", "duracion": 120}}. No incluyas NADA MÁS que el objeto JSON en tu respuesta.`;
                 const serviciosResult = await chatWithPDF(serviciosPrompt);
 
                 if (serviciosResult.startsWith('Error:')) {
                     await client.sendMessage(senderId, `Lo siento, ${state.nombre}, no pude obtener la lista de servicios en este momento. Por favor, inténtalo más tarde.`);
-                    state.step = 'inicial'; // Volver al inicio o manejar de otra forma
+                    // Quizás volver a 'inicial' o manejar de otra forma
+                    delete conversationStates[senderId]; // Ejemplo: terminar conversación
                     return;
                 }
 
+                // Extraer JSON de la respuesta (más robusto)
+                let serviciosCargados = {};
                 const jsonMatchServicios = serviciosResult.match(/\{[\s\S]*\}/);
-                if (!jsonMatchServicios) {
+                if (jsonMatchServicios) {
+                     serviciosCargados = JSON.parse(jsonMatchServicios[0]);
+                } else {
                      throw new Error("No se encontró JSON en la respuesta de servicios.");
                 }
 
-                servicios = JSON.parse(jsonMatchServicios[0]); // Poblar la variable global 'servicios'
-
-                // Verificar que 'servicios' no esté vacío
-                if (Object.keys(servicios).length === 0) {
+                // Verificar que 'serviciosCargados' no esté vacío
+                if (Object.keys(serviciosCargados).length === 0) {
                      throw new Error("La lista de servicios extraída está vacía.");
                 }
 
-                console.log("Servicios cargados dinámicamente:", servicios);
+                // IMPORTANTE: Asignar a la variable global 'servicios' para usarla en otros pasos
+                servicios = serviciosCargados;
+
+                // console.log("Servicios cargados dinámicamente:", servicios);
 
                 // Construir y enviar menú de servicios
-                let menuServicios = `Perfecto. ¿Qué servicio deseas agendar?\nResponde con el número correspondiente:\n\n`;
+                let menuServicios = `Perfecto, ${state.nombre}. ¿Qué servicio deseas agendar?\nResponde con el número correspondiente:\n\n`;
                 for (const [id, servicio] of Object.entries(servicios)) {
                     menuServicios += `${id}. ${servicio.nombre} (${servicio.duracion} min)\n`;
                 }
@@ -466,12 +438,11 @@ client.on('message', async (message) => {
                 state.conversationHistory.push({ role: 'assistant', content: menuServicios });
 
             } catch (error) {
-                console.error("Error al cargar/parsear servicios desde ChatPDF:", error, "Respuesta recibida:", serviciosResult);
+                console.error("Error al cargar/parsear servicios desde ChatPDF:", error, "Respuesta recibida:", typeof serviciosResult !== 'undefined' ? serviciosResult : 'undefined');
                 await client.sendMessage(senderId, `Lo siento ${state.nombre}, tuve problemas para obtener la lista de servicios. Por favor, intenta de nuevo más tarde.`);
                 // Resetear estado o manejar error
                 delete conversationStates[senderId]; // Ejemplo: terminar conversación por error crítico
             }
-            // --- FIN NUEVO ---
             break;
 
         case 'servicio':
@@ -521,7 +492,7 @@ client.on('message', async (message) => {
 
                 // --- NUEVO: Cargar horarios desde PDF ---
                 try {
-                     const horariosPrompt = `Extrae únicamente la lista de horarios generales de atención disponibles mencionados en el PDF. Devuelve el resultado estrictamente como un array JSON de strings, donde cada string es una hora en formato "HH:MM". Ejemplo: ["10:00", "11:00", "12:00", "14:00", "15:00"]. No incluyas NADA MÁS que el array JSON en tu respuesta.`;
+                     const horariosPrompt = `Extrae únicamente la lista de horarios generales de atención disponibles mencionados en el PDF. Devuelve el resultado estrictamente como un array JSON de strings, donde cada string es una hora en formato "HH:MM", ten en cuenta que si ves algo como 10:00 am a 12:00 pm o 10:00 am - 12:00 pm es un rango de horarios de una hora por ejemplo 10:00am, 11:00am, 12:00pm. Ejemplo: ["10:00", "11:00", "12:00", "14:00", "15:00"]. No incluyas NADA MÁS que el array JSON en tu respuesta.`;
                      const horariosResult = await chatWithPDF(horariosPrompt);
 
                      if (horariosResult.startsWith('Error:')) {
@@ -541,7 +512,7 @@ client.on('message', async (message) => {
                          throw new Error("La lista de horarios extraída está vacía o no es un array.");
                      }
 
-                     console.log("Horarios cargados dinámicamente:", horariosDisponibles);
+                    //  console.log("Horarios cargados dinámicamente:", horariosDisponibles);
 
                      // Construir y enviar menú de horarios
                      let menuHorarios = `¡Genial! Para la fecha ${dia}/${mes}/${anio}, estos son nuestros horarios generales de atención. Por favor, selecciona una hora respondiendo con el formato HH:MM (ejemplo: 11:00):\n\n`;
